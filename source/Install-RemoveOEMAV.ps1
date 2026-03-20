@@ -7,7 +7,7 @@
     Si McAfee WPS résiste (driver kernel), désactive les drivers et planifie nettoyage au reboot
     Retourne exit 0 rapidement pour ne pas bloquer l'ESP
 .NOTES
-    Genesienne Groupe - Version 2.2 - Mars 2026
+    Genesienne Groupe - Version 2.3 - Mars 2026
     
     Structure package .intunewin :
     source\
@@ -44,7 +44,7 @@ function Write-Log {
     "$ts - $Message" | Out-File -FilePath $LogFile -Append -Encoding UTF8
 }
 
-Write-Log "========== Début suppression AV OEM v2.2 =========="
+Write-Log "========== Début suppression AV OEM v2.3 =========="
 Write-Log "Script directory: $scriptDir"
 
 # ============================================================
@@ -69,7 +69,7 @@ if ($mcafeeDetected -and (Test-Path $zipFile)) {
     }
     
     try {
-        Expand-Archive -Path $zipFile -DestinationPath $tempPath -Force
+        Expand-Archive -Path $zipFile -DestinationPath $tempPath -Force -ErrorAction Stop
         Write-Log "ZIP extrait dans $tempPath"
     } catch {
         Write-Log "Erreur extraction ZIP : $($_.Exception.Message)"
@@ -124,40 +124,13 @@ if ($mcafeeWpsPresent) {
         Start-Sleep -Seconds 3
     }
     
-    # b) Désactiver les drivers
-    foreach ($driver in @("mfesec", "mfeelam", "McAfeeWPS", "mfewfpk")) {
-        $result = sc.exe query $driver 2>&1
-        if ($result -notlike "*FAILED*") {
-            sc.exe config $driver start= disabled 2>&1 | Out-Null
-            Write-Log "Driver $driver désactivé"
-        }
-    }
-    
-    # c) Supprimer les clés registre McAfee
-    Remove-Item "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\McAfee.WPS" -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item "HKLM:\SOFTWARE\McAfee" -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item "HKLM:\SOFTWARE\WOW6432Node\McAfee" -Recurse -Force -ErrorAction SilentlyContinue
-    Write-Log "Clés registre McAfee supprimées"
-    
-    # c2) Supprimer raccourci menu Démarrer
-    Remove-Item "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\McAfee" -Recurse -Force -ErrorAction SilentlyContinue
-    Write-Log "Raccourci menu Démarrer McAfee supprimé"
-    
-    # d) Tuer les processus
+    # b) Tuer les processus en premier (libérer les verrous fichiers)
     foreach ($procName in @("mc-fw-host", "mc-neo-host", "mc-update", "McUICnt", "mc-launch", "mc-web-view", "mc-dad", "mc-vpn", "mc-sustainability", "mc-extn-browserhost", "mc-oem-subjob", "mc-sync-agent")) {
         Stop-Process -Name $procName -Force -ErrorAction SilentlyContinue
     }
     Start-Sleep -Seconds 3
-    
-    # e) Suppression dossiers + raccourci menu démarrer
-    foreach ($folder in @("C:\Program Files\McAfee", "C:\Program Files (x86)\McAfee", "C:\ProgramData\McAfee", "C:\Program Files\Common Files\McAfee", "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\McAfee")) {
-        if (Test-Path $folder) {
-            cmd /c "rd /s /q `"$folder`"" 2>$null
-            Remove-Item -Path $folder -Recurse -Force -ErrorAction SilentlyContinue
-        }
-    }
-    
-    # f) Supprimer services McAfee
+
+    # c) Arrêter et supprimer services McAfee (avant suppression dossiers)
     Get-Service | Where-Object { $_.DisplayName -like "*McAfee*" } | ForEach-Object {
         Stop-Service -Name $_.Name -Force -ErrorAction SilentlyContinue
         sc.exe delete $_.Name 2>&1 | Out-Null
@@ -166,7 +139,30 @@ if ($mcafeeWpsPresent) {
     foreach ($d in @("mfesec","mfeelam","mfewfpk","mfeavfk","mfefirek","cfwids")) {
         sc.exe delete $d 2>&1 | Out-Null
     }
-    
+
+    # d) Désactiver les drivers kernel
+    foreach ($driver in @("mfesec", "mfeelam", "McAfeeWPS", "mfewfpk")) {
+        $result = sc.exe query $driver 2>&1
+        if ($result -notlike "*FAILED*") {
+            sc.exe config $driver start= disabled 2>&1 | Out-Null
+            Write-Log "Driver $driver désactivé"
+        }
+    }
+
+    # e) Supprimer les clés registre McAfee
+    Remove-Item "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\McAfee.WPS" -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item "HKLM:\SOFTWARE\McAfee" -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item "HKLM:\SOFTWARE\WOW6432Node\McAfee" -Recurse -Force -ErrorAction SilentlyContinue
+    Write-Log "Clés registre McAfee supprimées"
+
+    # f) Suppression dossiers + raccourci menu démarrer
+    foreach ($folder in @("C:\Program Files\McAfee", "C:\Program Files (x86)\McAfee", "C:\ProgramData\McAfee", "C:\Program Files\Common Files\McAfee", "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\McAfee")) {
+        if (Test-Path $folder) {
+            cmd /c "rd /s /q `"$folder`"" 2>$null
+            Remove-Item -Path $folder -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     # g) Supprimer tâches planifiées McAfee
     Get-ScheduledTask | Where-Object { $_.TaskName -like "*McAfee*" } | ForEach-Object {
         Unregister-ScheduledTask -TaskName $_.TaskName -Confirm:$false -ErrorAction SilentlyContinue
@@ -263,7 +259,7 @@ foreach ($regPath in @("HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstal
                     Start-Process cmd.exe -ArgumentList "/c `"$($props.QuietUninstallString)`"" -Wait -NoNewWindow -ErrorAction SilentlyContinue
                 }
                 elseif ($props.UninstallString -like "MsiExec*") {
-                    $guid = [regex]::Match($props.UninstallString, '\{[A-F0-9-]+\}').Value
+                    $guid = [regex]::Match($props.UninstallString, '\{[A-Fa-f0-9-]+\}').Value
                     if ($guid) { Start-Process "msiexec.exe" -ArgumentList "/x $guid /qn /norestart REBOOT=ReallySuppress" -Wait -NoNewWindow }
                 }
                 else {
@@ -287,8 +283,9 @@ foreach ($pattern in $allPatterns) {
         Remove-AppxProvisionedPackage -Online -PackageName $_.PackageName -ErrorAction SilentlyContinue
     }
 }
+$allAppx = Get-AppxPackage -AllUsers -ErrorAction SilentlyContinue
 foreach ($pattern in $allPatterns) {
-    Get-AppxPackage -AllUsers -ErrorAction SilentlyContinue | Where-Object { $_.Name -like $pattern } | ForEach-Object {
+    $allAppx | Where-Object { $_.Name -like $pattern } | ForEach-Object {
         Remove-AppxPackage -Package $_.PackageFullName -AllUsers -ErrorAction SilentlyContinue
     }
 }
@@ -298,8 +295,9 @@ foreach ($pattern in $allPatterns) {
 # ============================================================
 Write-Log "--- Phase 6 : Nettoyage ---"
 
+$allServices = Get-Service -ErrorAction SilentlyContinue
 foreach ($pattern in $avPatterns) {
-    Get-Service | Where-Object { $_.DisplayName -like $pattern } | ForEach-Object {
+    $allServices | Where-Object { $_.DisplayName -like $pattern } | ForEach-Object {
         Stop-Service -Name $_.Name -Force -ErrorAction SilentlyContinue
         sc.exe delete $_.Name 2>&1 | Out-Null
     }
@@ -322,7 +320,7 @@ foreach ($runKey in @("HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run", "HK
     $entries = Get-ItemProperty $runKey -ErrorAction SilentlyContinue
     if ($entries) {
         $entries.PSObject.Properties | Where-Object {
-            $_.Value -like "*McAfee*" -or $_.Value -like "*Norton*" -or $_.Value -like "*Avast*" -or $_.Value -like "*AVG*"
+            $_.Value -like "*McAfee*" -or $_.Value -like "*Norton*" -or $_.Value -like "*Avast*" -or $_.Value -like "*AVG*" -or $_.Value -like "*Kaspersky*" -or $_.Value -like "*Trend Micro*" -or $_.Value -like "*Bitdefender*"
         } | ForEach-Object {
             Remove-ItemProperty -Path $runKey -Name $_.Name -ErrorAction SilentlyContinue
         }
@@ -346,7 +344,7 @@ if ($defender -and !$defender.AntivirusEnabled) {
 # ============================================================
 Remove-Item $tempPath -Recurse -Force -ErrorAction SilentlyContinue
 
-"AV OEM supprimés le $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - v2.2" | Out-File $markerFile -Encoding UTF8
+"AV OEM supprimés le $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - v2.3" | Out-File $markerFile -Encoding UTF8
 
-Write-Log "========== Suppression terminée v2.2 =========="
+Write-Log "========== Suppression terminée v2.3 =========="
 exit 0

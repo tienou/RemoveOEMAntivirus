@@ -22,7 +22,7 @@ Supprime également les AppX provisionnés : WildTangent, ExpressVPN, Dropbox Tr
 
 ```
 source/
-├── McAfeeRemoval.zip          # Contenu MCPR extrait via 7-Zip, zippé
+├── McAfeeRemoval.zip          # MCPR ancienne version (voir section ci-dessous)
 ├── Install-RemoveOEMAV.ps1    # Script principal (8 phases)
 ├── Detect-RemoveOEMAV.ps1     # Détection Intune (marqueur + registre)
 └── Uninstall-RemoveOEMAV.ps1  # Supprime le marqueur pour ré-exécution
@@ -66,11 +66,13 @@ La détection vérifie le **registre** (pas les fichiers sur disque) car les fic
 - `C:\ProgramData\Genesienne\Logs\Remove-OEMAntivirus.log`
 - `C:\ProgramData\Genesienne\Logs\mccleanup.txt` (log MCPR)
 
-## Préparer McAfeeRemoval.zip
+## McAfeeRemoval.zip
 
-1. Télécharger [MCPR (McAfee Consumer Product Removal)](https://www.mcafee.com/consumer-support/help/how-to-use-the-mcafee-consumer-product-removal-tool-mcpr.html)
-2. Extraire `MCPR.exe` avec 7-Zip → récupérer le contenu du dossier `$1`
-3. Zipper le contenu dans `McAfeeRemoval.zip`
+Le fichier `McAfeeRemoval.zip` provient du repo original [bradleyf-2025/KillMcAfee.ps1](https://github.com/bradleyf-2025/KillMcAfee.ps1) (`McAfeeUninstall.zip`). Il contient une version spécifique plus ancienne de MCPR qui fonctionne pour supprimer McAfee WPS sur les laptops OEM.
+
+> **Ne pas télécharger MCPR depuis le site McAfee** — les versions récentes ne suppriment plus McAfee WPS correctement.
+
+Voir le post original : [How I killed McAfee for our Lenovo laptops (r/Intune)](https://www.reddit.com/r/Intune/comments/1iyvtp4/how_i_killed_mcafee_for_our_lenovo_laptops/)
 
 ## Regénérer le .intunewin
 

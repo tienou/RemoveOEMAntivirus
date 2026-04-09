@@ -112,4 +112,4 @@ IntuneWinAppUtil.exe -c .\source -s Install-RemoveOEMAV.ps1 -o .\prod -q
 
 ## Crédits
 
-Fork de [bradleyf-2025/KillMcAfee.ps1](https://github.com/bradleyf-2025/KillMcAfee.ps1) — adapté et étendu par **Genesienne Groupe**.
+Fork de [bradleyf-2025/KillMcAfee.ps1](https://github.com/bradleyf-2025/KillMcAfee.ps1) 

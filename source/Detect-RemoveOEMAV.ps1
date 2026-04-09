@@ -3,20 +3,22 @@
     Détecte si les AV OEM ont été supprimés avec succès
 .DESCRIPTION
     Win32 App Intune - Script de détection compatible ESP Autopilot
-    Version 2.0 - Avec mécanisme de fallback
-    
-    Logique :
+    Version 3.0 - Anti-blocage ESP
+
+    Logique (conçue pour NE JAMAIS bloquer l'ESP) :
     - Exit 0 = Détecté (l'une des conditions suivantes) :
-      a) Marqueur présent ET aucun AV dans le registre
-      b) FALLBACK : Aucun AV dans le registre ET aucun processus AV actif
-         (même si le marqueur est absent - le script d'install a pu échouer
-          à créer le marqueur mais a quand même supprimé les AV)
-    - Exit 1 = Non détecté (AV encore présent dans le registre ou en mémoire)
-    
-    IMPORTANT : On vérifie le REGISTRE en priorité, pas les fichiers sur disque.
-    Les fichiers McAfee/Norton peuvent rester verrouillés par le driver kernel
-    jusqu'au reboot. Le script d'install désactive les drivers et planifie
-    le nettoyage fichiers au reboot.
+      a) Marqueur présent → on fait confiance au script d'install
+         (les résidus seront nettoyés par la tâche post-reboot)
+      b) FALLBACK : Aucun AV dans le registre ET aucun processus/service AV actif
+    - Exit 1 = Non détecté (marqueur absent ET AV encore présent)
+
+    IMPORTANT : Le marqueur est créé à la FIN du script d'install.
+    S'il existe, le script s'est exécuté complètement.
+    On ne supprime JAMAIS le marqueur depuis la détection car cela
+    provoque une boucle de retry infinie pendant l'ESP Autopilot.
+    Les drivers kernel peuvent empêcher la suppression totale des
+    services/fichiers avant reboot — c'est normal et géré par la
+    tâche planifiée post-reboot.
 #>
 
 $markerFile = "C:\ProgramData\Genesienne\OEMAVRemoved.txt"
@@ -115,40 +117,35 @@ function Test-AVServiceRunning {
 # DÉTECTION PRINCIPALE
 # ============================================================
 
-$avInRegistry = Test-AVInRegistry
 $markerExists = Test-Path $markerFile
 
-# --- Cas 1 : Marqueur présent ---
+# --- Cas 1 : Marqueur présent = le script d'install s'est exécuté ---
+# On fait confiance au marqueur. Ne JAMAIS le supprimer ici.
+# Les résidus (services protégés par driver kernel, fichiers verrouillés)
+# seront nettoyés par la tâche planifiée post-reboot.
 if ($markerExists) {
-    if ($avInRegistry) {
-        # Marqueur présent mais AV encore dans le registre = incohérence
-        # Supprimer le marqueur pour forcer la ré-exécution
-        Write-Host "Marqueur présent mais AV encore dans le registre - suppression marqueur"
-        Remove-Item $markerFile -Force -ErrorAction SilentlyContinue
-        exit 1
-    }
-    Write-Host "AV OEM supprimés - marqueur présent, registre propre"
+    Write-Host "Marqueur présent - script d'install exécuté, détection OK"
     exit 0
 }
 
-# --- Cas 2 : Marqueur absent - Vérifier le fallback ---
+# --- Cas 2 : Marqueur absent - Vérifier si les AV sont déjà absents ---
+$avInRegistry = Test-AVInRegistry
+
 if (-not $avInRegistry) {
-    # Pas d'AV dans le registre - vérifier aussi les processus et services
     $avProcessActive = Test-AVProcessRunning
     $avServiceActive = Test-AVServiceRunning
 
     if (-not $avProcessActive -and -not $avServiceActive) {
-        # FALLBACK : Aucun AV nulle part - le script d'install a fonctionné
-        # même si le marqueur n'a pas été créé
+        # FALLBACK : Aucun AV nulle part - considéré comme supprimé
         Write-Host "FALLBACK : Aucun AV détecté (registre, processus, services) - considéré comme supprimé"
-        
-        # Créer le marqueur rétroactivement pour les prochaines détections
+
+        # Créer le marqueur rétroactivement
         $markerDir = Split-Path $markerFile -Parent
         if (!(Test-Path $markerDir)) {
             New-Item -Path $markerDir -ItemType Directory -Force | Out-Null
         }
         "Removed by fallback detection - $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" | Out-File $markerFile -Encoding UTF8
-        
+
         exit 0
     }
     else {

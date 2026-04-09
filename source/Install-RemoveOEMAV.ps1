@@ -8,7 +8,7 @@
     - Autres AV : Désinstallation via registre UninstallString
     Retourne exit 0 rapidement pour ne pas bloquer l'ESP
 .NOTES
-    Genesienne Groupe - Version 3.2 - Avril 2026
+    Genesienne Groupe - Version 3.3 - Avril 2026
     
     Structure package .intunewin :
     source\
@@ -45,7 +45,7 @@ function Write-Log {
     "$ts - $Message" | Out-File -FilePath $LogFile -Append -Encoding UTF8
 }
 
-Write-Log "========== Début suppression AV OEM v3.2 =========="
+Write-Log "========== Début suppression AV OEM v3.3 =========="
 Write-Log "Script directory: $scriptDir"
 
 # ============================================================
@@ -267,77 +267,96 @@ if ($nortonProducts) { $nortonDetected = $true }
 if (Test-Path "HKLM:\SOFTWARE\Norton") { $nortonDetected = $true }
 if (Test-Path "HKLM:\SOFTWARE\Symantec") { $nortonDetected = $true }
 if (Test-Path "C:\Program Files\Norton Security") { $nortonDetected = $true }
+if (Test-Path "C:\Program Files\Norton 360") { $nortonDetected = $true }
+if (Test-Path "C:\Program Files\Norton") { $nortonDetected = $true }
 if (Test-Path "C:\Program Files\NortonInstaller") { $nortonDetected = $true }
+if (Test-Path "C:\Program Files\Common Files\Norton") { $nortonDetected = $true }
 if (Test-Path "C:\Program Files (x86)\Norton Security") { $nortonDetected = $true }
-if (Get-Process -Name "Norton*","NS*","nst*","ccSvcHst","navw32" -ErrorAction SilentlyContinue) { $nortonDetected = $true }
+if (Get-Process -Name "NortonSvc","NortonUI","ccSvcHst","navw32" -ErrorAction SilentlyContinue) { $nortonDetected = $true }
+if (Get-Service -Name "Norton Antivirus","Norton Firewall","NortonSvc" -ErrorAction SilentlyContinue) { $nortonDetected = $true }
 
 if ($nortonDetected) {
     Write-Log "Norton détecté - Suppression forcée"
-    
-    # a) Tuer tous les processus Norton/Symantec
+
+    # a) Tentative d'uninstall via icarus.exe (Norton 360 Gen Digital)
+    $icarusExe = Get-ChildItem "C:\Program Files\Common Files\Norton" -Recurse -Filter "icarus.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($icarusExe) {
+        Write-Log "icarus.exe trouvé ($($icarusExe.FullName)) - Tentative uninstall silencieux"
+        $proc = Start-Process $icarusExe.FullName -ArgumentList "/manual_update /uninstall /s" -NoNewWindow -PassThru -ErrorAction SilentlyContinue
+        if ($proc -and !$proc.WaitForExit(180000)) {
+            Write-Log "icarus.exe timeout 3 min - Kill"
+            $proc | Stop-Process -Force -ErrorAction SilentlyContinue
+        } else {
+            Write-Log "icarus.exe terminé (ExitCode: $($proc.ExitCode))"
+        }
+        Start-Sleep -Seconds 5
+    }
+
+    # b) Tuer tous les processus Norton/Symantec/Gen Digital
     Write-Log "Kill processus Norton"
-    $nortonProcs = @("NortonSecurity", "Norton", "NortonLifeLock", "NS", "NST", "nst", "navw32", 
-                     "ccSvcHst", "ccApp", "ccEvtMgr", "ccSetMgr", "ccProxy", "ccPwdSvc",
+    foreach ($procName in @("NortonSvc", "NortonUI", "NortonSecurity", "Norton", "NortonLifeLock",
+                     "navw32", "ccSvcHst", "ccApp", "ccEvtMgr", "ccSetMgr", "ccProxy", "ccPwdSvc",
                      "Norton360", "NortonOnlineDashboard", "NortonBrowser", "NortonSample",
                      "NortonCrashRecovery", "NortonAutoFix", "NortonPrivacy",
-                     "SymCorpUI", "SymSilentInstall", "nsWscSvc", "SymEFA")
-    foreach ($procName in $nortonProcs) {
-        Get-Process -Name $procName -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+                     "SymCorpUI", "SymSilentInstall", "nsWscSvc", "SymEFA",
+                     "icarus", "icarusSvc")) {
+        Stop-Process -Name $procName -Force -ErrorAction SilentlyContinue
     }
-    # Aussi tuer par wildcard
-    Get-Process | Where-Object { $_.ProcessName -like "*Norton*" -or $_.ProcessName -like "*Symantec*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+    # Wildcard pour attraper tout processus résiduel
+    Get-Process | Where-Object { $_.ProcessName -like "*Norton*" -or $_.ProcessName -like "*Symantec*" -or $_.ProcessName -like "*icarus*" } | Stop-Process -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 3
-    
-    # b) Arrêter et supprimer les services Norton/Symantec
+
+    # c) Arrêter et supprimer les services Norton
+    # IMPORTANT : filtre par DisplayName et Name contenant exactement "Norton" - PAS de wildcard court comme *NST* qui matche les services Windows (AxInstSV, DeviceInstall...)
     Write-Log "Suppression services Norton"
-    Get-Service | Where-Object { $_.DisplayName -like "*Norton*" -or $_.DisplayName -like "*Symantec*" -or $_.Name -like "*Norton*" -or $_.Name -like "*NST*" -or $_.Name -like "*N360*" } | ForEach-Object {
+    Get-Service | Where-Object { $_.DisplayName -like "*Norton*" -or $_.DisplayName -like "*Symantec*" -or $_.Name -like "*Norton*" } | ForEach-Object {
         Write-Log "Arrêt service : $($_.Name) ($($_.DisplayName))"
         Stop-Service -Name $_.Name -Force -ErrorAction SilentlyContinue
         sc.exe config $_.Name start= disabled 2>&1 | Out-Null
         sc.exe delete $_.Name 2>&1 | Out-Null
     }
-    # Services connus Norton
-    foreach ($svc in @("Norton Security", "Norton AntiVirus", "Norton 360", "NortonLifeLock Update",
-                       "nsWscSvc", "N360", "NIS", "NAV", "ccSetMgr", "ccEvtMgr", "ccProxy",
+    # Services connus Norton (noms exacts pour éviter les faux positifs)
+    foreach ($svc in @("Norton Antivirus", "Norton Firewall", "Norton Tools", "nortonAvDumper64",
+                       "NortonVpn", "NortonWscReporter", "NortonSvc",
+                       "Norton Security", "Norton AntiVirus", "Norton 360", "NortonLifeLock Update",
+                       "nsWscSvc", "ccSetMgr", "ccEvtMgr", "ccProxy",
                        "ccPwdSvc", "ccSvcHst", "SymEFA", "SymEvent", "SRTSP", "SRTSPx")) {
-        sc.exe stop $svc 2>&1 | Out-Null
-        sc.exe config $svc start= disabled 2>&1 | Out-Null
-        sc.exe delete $svc 2>&1 | Out-Null
+        sc.exe stop "$svc" 2>&1 | Out-Null
+        sc.exe config "$svc" start= disabled 2>&1 | Out-Null
+        sc.exe delete "$svc" 2>&1 | Out-Null
     }
     Start-Sleep -Seconds 3
-    
-    # c) Désactiver les drivers kernel Norton/Symantec
+
+    # d) Désactiver et supprimer les drivers kernel Norton/Symantec
     Write-Log "Désactivation drivers Norton"
     foreach ($driver in @("SymEFA", "SymEvent", "SymIRON", "SymNetS", "SymDS", "SymELAM",
                           "SRTSP", "SRTSPx", "SRTSPX", "ccSet64", "ccSet",
                           "BHDrvx64", "BHDrvx86", "IDSvia64", "IDSvia86",
-                          "eeCtrl64", "eeCtrl", "EraserUtilRebootDrv",
-                          "Norton360", "N360")) {
-        $result = sc.exe query $driver 2>&1
-        if ($result -notlike "*FAILED*") {
-            sc.exe config $driver start= disabled 2>&1 | Out-Null
-            Write-Log "Driver $driver désactivé"
-        }
+                          "eeCtrl64", "eeCtrl", "EraserUtilRebootDrv")) {
+        sc.exe config $driver start= disabled 2>&1 | Out-Null
+        reg.exe delete "HKLM\SYSTEM\CurrentControlSet\Services\$driver" /f 2>&1 | Out-Null
+        Write-Log "Driver $driver désactivé et supprimé"
     }
-    
-    # d) Supprimer les clés registre Norton (Uninstall + produit)
+
+    # e) Supprimer les clés registre Norton (Uninstall + produit)
     Write-Log "Nettoyage registre Norton"
-    # Clés Uninstall
     foreach ($regPath in @("HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall", "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall")) {
         Get-ChildItem $regPath -ErrorAction SilentlyContinue | ForEach-Object {
             $props = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
-            if ($props.DisplayName -like "*Norton*") {
-                Write-Log "Suppression clé registre : $($props.DisplayName)"
+            if ($props.DisplayName -like "*Norton*" -or $props.Publisher -like "*Norton*" -or $props.Publisher -like "*Gen Digital*" -or $props.Publisher -like "*Symantec*") {
+                Write-Log "Suppression clé registre : $($props.DisplayName) ($($props.Publisher))"
                 Remove-Item $_.PSPath -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
     }
-    # Clés produit Norton/Symantec
+    # Clés produit Norton/Symantec/Gen Digital
     foreach ($key in @(
         "HKLM:\SOFTWARE\Norton",
         "HKLM:\SOFTWARE\Symantec",
+        "HKLM:\SOFTWARE\Gen Digital",
         "HKLM:\SOFTWARE\WOW6432Node\Norton",
         "HKLM:\SOFTWARE\WOW6432Node\Symantec",
+        "HKLM:\SOFTWARE\WOW6432Node\Gen Digital",
         "HKLM:\SOFTWARE\NortonInstaller",
         "HKLM:\SOFTWARE\WOW6432Node\NortonInstaller"
     )) {
@@ -346,36 +365,41 @@ if ($nortonDetected) {
             Write-Log "Clé registre supprimée : $key"
         }
     }
-    
-    # e) Entrées Run au démarrage
+
+    # f) Entrées Run au démarrage
     foreach ($runKey in @("HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run", "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run")) {
         $entries = Get-ItemProperty $runKey -ErrorAction SilentlyContinue
         if ($entries) {
             $entries.PSObject.Properties | Where-Object {
-                $_.Value -like "*Norton*" -or $_.Value -like "*Symantec*"
+                $_.Value -like "*Norton*" -or $_.Value -like "*Symantec*" -or $_.Value -like "*icarus*"
             } | ForEach-Object {
                 Remove-ItemProperty -Path $runKey -Name $_.Name -ErrorAction SilentlyContinue
                 Write-Log "Entrée Run supprimée : $($_.Name)"
             }
         }
     }
-    
-    # f) Suppression des dossiers Norton
+
+    # g) Suppression des dossiers Norton (inclut Gen Digital / Icarus)
     Write-Log "Suppression dossiers Norton"
     foreach ($folder in @(
         "C:\Program Files\Norton Security",
         "C:\Program Files (x86)\Norton Security",
         "C:\Program Files\Norton 360",
         "C:\Program Files (x86)\Norton 360",
+        "C:\Program Files\Norton",
+        "C:\Program Files (x86)\Norton",
         "C:\Program Files\NortonInstaller",
         "C:\Program Files (x86)\NortonInstaller",
+        "C:\Program Files\Common Files\Norton",
+        "C:\Program Files (x86)\Common Files\Norton",
         "C:\ProgramData\Norton",
         "C:\ProgramData\NortonInstaller",
         "C:\ProgramData\Symantec",
         "C:\Program Files\Common Files\Symantec Shared",
         "C:\Program Files (x86)\Common Files\Symantec Shared",
         "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Norton Security",
-        "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Norton 360"
+        "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Norton 360",
+        "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Norton"
     )) {
         if (Test-Path $folder) {
             cmd /c "rd /s /q `"$folder`"" 2>$null
@@ -383,8 +407,8 @@ if ($nortonDetected) {
             Write-Log "Dossier supprimé : $folder"
         }
     }
-    
-    # g) AppX Norton
+
+    # h) AppX Norton
     Write-Log "Suppression AppX Norton"
     Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue |
         Where-Object { $_.DisplayName -like "*Norton*" -or $_.DisplayName -like "*Symantec*" } | ForEach-Object {
@@ -396,14 +420,14 @@ if ($nortonDetected) {
         Write-Log "Suppression AppX : $($_.Name)"
         Remove-AppxPackage -Package $_.PackageFullName -AllUsers -ErrorAction SilentlyContinue
     }
-    
-    # h) Tâches planifiées Norton
+
+    # i) Tâches planifiées Norton
     Get-ScheduledTask | Where-Object { $_.TaskName -like "*Norton*" -or $_.TaskName -like "*Symantec*" } | ForEach-Object {
         Unregister-ScheduledTask -TaskName $_.TaskName -Confirm:$false -ErrorAction SilentlyContinue
         Write-Log "Tâche planifiée supprimée : $($_.TaskName)"
     }
-    
-    # i) Shell extensions Norton
+
+    # j) Shell extensions Norton
     Write-Log "Nettoyage shell extensions Norton"
     foreach ($root in @("HKLM:\SOFTWARE\Classes", "HKLM:\SOFTWARE\WOW6432Node\Classes")) {
         foreach ($sub in @("*", "Directory", "Drive", "Folder", "Directory\Background")) {
@@ -412,45 +436,59 @@ if ($nortonDetected) {
                 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
-    
-    # j) Tâche post-reboot si fichiers Norton verrouillés
-    $nortonFoldersExist = (Test-Path "C:\Program Files\Norton Security") -or (Test-Path "C:\Program Files\Norton 360") -or (Test-Path "C:\Program Files\NortonInstaller")
+
+    # k) Tâche post-reboot si fichiers Norton verrouillés
+    $nortonFoldersExist = (Test-Path "C:\Program Files\Norton Security") -or (Test-Path "C:\Program Files\Norton 360") -or
+        (Test-Path "C:\Program Files\Norton") -or (Test-Path "C:\Program Files\NortonInstaller") -or
+        (Test-Path "C:\Program Files\Common Files\Norton")
     if ($nortonFoldersExist) {
         Write-Log "Fichiers Norton verrouillés - Tâche post-reboot"
-        
+
         $cleanupScript = "$markerDir\CleanNorton.ps1"
         @'
 Start-Sleep -Seconds 15
-Get-Service | Where-Object { $_.DisplayName -like "*Norton*" -or $_.DisplayName -like "*Symantec*" } | ForEach-Object {
+Get-Process | Where-Object { $_.ProcessName -like "*Norton*" -or $_.ProcessName -like "*Symantec*" -or $_.ProcessName -like "*icarus*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+Get-Service | Where-Object { $_.DisplayName -like "*Norton*" -or $_.DisplayName -like "*Symantec*" -or $_.Name -like "*Norton*" } | ForEach-Object {
     Stop-Service -Name $_.Name -Force -ErrorAction SilentlyContinue
     sc.exe delete $_.Name 2>&1 | Out-Null
 }
-foreach ($svc in @("ccSetMgr","ccEvtMgr","ccProxy","ccSvcHst","SymEFA","SymEvent","SRTSP","SRTSPx","nsWscSvc")) {
-    sc.exe delete $svc 2>&1 | Out-Null
+foreach ($svc in @("Norton Antivirus","Norton Firewall","Norton Tools","nortonAvDumper64","NortonVpn","NortonWscReporter","NortonSvc","ccSetMgr","ccEvtMgr","ccProxy","ccSvcHst","SymEFA","SymEvent","SRTSP","SRTSPx","nsWscSvc")) {
+    sc.exe delete "$svc" 2>&1 | Out-Null
 }
 foreach ($driver in @("SymEFA","SymEvent","SymIRON","SymNetS","SymDS","SymELAM","SRTSP","SRTSPx","BHDrvx64","IDSvia64","eeCtrl64","EraserUtilRebootDrv")) {
     sc.exe config $driver start= disabled 2>&1 | Out-Null
-    sc.exe delete $driver 2>&1 | Out-Null
+    reg.exe delete "HKLM\SYSTEM\CurrentControlSet\Services\$driver" /f 2>&1 | Out-Null
 }
-foreach ($f in @("C:\Program Files\Norton Security","C:\Program Files (x86)\Norton Security","C:\Program Files\Norton 360","C:\Program Files (x86)\Norton 360","C:\Program Files\NortonInstaller","C:\Program Files (x86)\NortonInstaller","C:\ProgramData\Norton","C:\ProgramData\NortonInstaller","C:\ProgramData\Symantec","C:\Program Files\Common Files\Symantec Shared","C:\Program Files (x86)\Common Files\Symantec Shared")) {
+foreach ($f in @("C:\Program Files\Norton Security","C:\Program Files (x86)\Norton Security","C:\Program Files\Norton 360","C:\Program Files (x86)\Norton 360","C:\Program Files\Norton","C:\Program Files (x86)\Norton","C:\Program Files\NortonInstaller","C:\Program Files (x86)\NortonInstaller","C:\Program Files\Common Files\Norton","C:\Program Files (x86)\Common Files\Norton","C:\ProgramData\Norton","C:\ProgramData\NortonInstaller","C:\ProgramData\Symantec","C:\Program Files\Common Files\Symantec Shared","C:\Program Files (x86)\Common Files\Symantec Shared")) {
     if (Test-Path $f) { cmd /c "rd /s /q `"$f`"" 2>$null; Remove-Item $f -Recurse -Force -ErrorAction SilentlyContinue }
+}
+foreach ($regPath in @("HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall", "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall")) {
+    Get-ChildItem $regPath -ErrorAction SilentlyContinue | ForEach-Object {
+        $p = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
+        if ($p.DisplayName -like "*Norton*" -or $p.Publisher -like "*Gen Digital*") {
+            Remove-Item $_.PSPath -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+foreach ($k in @("HKLM:\SOFTWARE\Norton","HKLM:\SOFTWARE\Symantec","HKLM:\SOFTWARE\Gen Digital","HKLM:\SOFTWARE\WOW6432Node\Norton","HKLM:\SOFTWARE\WOW6432Node\Symantec")) {
+    Remove-Item $k -Recurse -Force -ErrorAction SilentlyContinue
 }
 Get-ScheduledTask | Where-Object { $_.TaskName -like "*Norton*" -or $_.TaskName -like "*Symantec*" } | Unregister-ScheduledTask -Confirm:$false -ErrorAction SilentlyContinue
 Unregister-ScheduledTask -TaskName "Genesienne-CleanNorton" -Confirm:$false -ErrorAction SilentlyContinue
 Remove-Item $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
 '@ | Out-File $cleanupScript -Encoding UTF8
-        
+
         $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$cleanupScript`""
         $trigger = New-ScheduledTaskTrigger -AtStartup
         $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -RunLevel Highest
         $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
         Register-ScheduledTask -TaskName "Genesienne-CleanNorton" -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
-        
+
         Write-Log "Tâche Genesienne-CleanNorton créée"
     } else {
         Write-Log "Dossiers Norton supprimés"
     }
-    
+
     Write-Log "Norton supprimé"
 } else {
     Write-Log "Norton non détecté"
@@ -585,7 +623,7 @@ try {
 # ============================================================
 Remove-Item $tempPath -Recurse -Force -ErrorAction SilentlyContinue
 
-"AV OEM supprimés le $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - v3.2" | Out-File $markerFile -Encoding UTF8
+"AV OEM supprimés le $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - v3.3" | Out-File $markerFile -Encoding UTF8
 
-Write-Log "========== Suppression terminée v3.2 =========="
+Write-Log "========== Suppression terminée v3.3 =========="
 exit 0

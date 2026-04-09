@@ -46,9 +46,9 @@ function Test-AVProcessRunning {
         # McAfee
         "McAPExe", "mcshield", "mfemms", "mfevtps", "ModuleCoreService",
         "PEFService", "McCSPServiceHost", "MMSSHOST", "mfewc",
-        # Norton / Symantec
-        "Norton*", "Symantec*", "ccSvcHst", "navw32", "nsWscSvc",
-        "NortonSecurity", "NortonLifeLock*", "GenericSvc",
+        # Norton / Symantec / Gen Digital
+        "Norton*", "Symantec*", "NortonSvc", "NortonUI", "ccSvcHst", "navw32", "nsWscSvc",
+        "NortonSecurity", "NortonLifeLock*", "icarus*",
         # Avast / AVG
         "AvastSvc", "AvastUI", "avgnt", "avgsvc",
         # Kaspersky
@@ -74,8 +74,10 @@ function Test-AVServiceRunning {
     $avServicePatterns = @(
         # McAfee
         "McAfee*", "mfemms", "mfevtp", "McAPExe", "HomeNetSvc",
-        # Norton / Symantec
-        "Norton*", "N360*", "Symantec*", "NortonSecurity", "NSW*",
+        # Norton / Symantec / Gen Digital
+        "Norton*", "NortonSvc", "NortonVpn", "nortonAvDumper64", "NortonWscReporter",
+        "Norton Antivirus", "Norton Firewall", "Norton Tools",
+        "Symantec*", "NortonSecurity",
         # Avast / AVG
         "avast*", "avg*",
         # Kaspersky

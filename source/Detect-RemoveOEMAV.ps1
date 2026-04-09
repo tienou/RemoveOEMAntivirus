@@ -71,12 +71,12 @@ function Test-AVProcessRunning {
 
 # --- Fonction : Vérifier les services AV actifs ---
 function Test-AVServiceRunning {
-    $avServicePatterns = @(
+    # Patterns par Name (pas d'espace)
+    $avServiceByName = @(
         # McAfee
-        "McAfee*", "mfemms", "mfevtp", "McAPExe", "HomeNetSvc",
+        "McAfee*", "mfemms", "mfevtp", "McAPExe", "HomeNetSvc", "mc-*",
         # Norton / Symantec / Gen Digital
         "Norton*", "NortonSvc", "NortonVpn", "nortonAvDumper64", "NortonWscReporter",
-        "Norton Antivirus", "Norton Firewall", "Norton Tools",
         "Symantec*", "NortonSecurity",
         # Avast / AVG
         "avast*", "avg*",
@@ -88,14 +88,26 @@ function Test-AVServiceRunning {
         "VSSERV", "bdredline*"
     )
 
-    foreach ($pattern in $avServicePatterns) {
-        $services = Get-Service -Name $pattern -ErrorAction SilentlyContinue | 
+    foreach ($pattern in $avServiceByName) {
+        $services = Get-Service -Name $pattern -ErrorAction SilentlyContinue |
                     Where-Object { $_.Status -eq 'Running' }
         if ($services) {
             Write-Host "Service AV actif : $($services[0].Name)"
             return $true
         }
     }
+
+    # Patterns par DisplayName (noms avec espaces - Norton Gen Digital)
+    $avServiceByDisplayName = @("*Norton*", "*McAfee*", "*Symantec*")
+    foreach ($pattern in $avServiceByDisplayName) {
+        $services = Get-Service -ErrorAction SilentlyContinue |
+                    Where-Object { $_.DisplayName -like $pattern -and $_.Status -eq 'Running' }
+        if ($services) {
+            Write-Host "Service AV actif : $($services[0].Name) ($($services[0].DisplayName))"
+            return $true
+        }
+    }
+
     return $false
 }
 
